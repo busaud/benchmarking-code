@@ -51,6 +51,9 @@ async function run() {
                     content = await callModel({ model: modelEntry.model, prompt });
                     code = extractFirstJsBlock(content);
                     if (!code) {
+                        // Save raw content for debugging
+                        const rawPath = path.join(modelDir, `${task.id}_${attempt}.raw.txt`);
+                        await fs.promises.writeFile(rawPath, String(content || ""), "utf8");
                         throw new Error("No JS code block found");
                     }
                     filepath = path.join(modelDir, `${task.id}_${attempt}.js`);
