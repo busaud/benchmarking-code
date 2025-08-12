@@ -31,6 +31,12 @@ npm install
 npm run bench
 ```
 
+- You can configure rounds and pass@k values via env vars. `PASS_AT_KS` is a comma-separated list of k values (defaults to `1,5,10`). The largest `k` must be ≤ `ROUNDS`; larger values are ignored with a warning.
+
+```
+cross-env ROUNDS=20 PASS_AT_KS=1,5,10 npm run bench
+```
+
 ## Models
 
 Configure in `bench/models.js`. Example:
@@ -54,3 +60,4 @@ Defined in `bench/tasks/`. Each task:
 
 - Keep prompts deterministic and outputs constrained. The runner enforces a code-only fenced block.
 - Extend with more tasks by adding files in `bench/tasks/` and registering in `bench/tasks/index.js`.
+- The summary (`generated/summary.json`) includes pass@k per model/task under `stats[model][task].passAt` and the list of ks under `passAtKs`.
