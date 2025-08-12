@@ -56,6 +56,23 @@ Defined in `bench/tasks/`. Each task:
 - Runner writes code to `generated/<model>/<task>.js`
 - Validator imports endpoint and validates behavior
 
+## Running generated endpoints manually (PORT_RUN)
+
+- The harness imports apps and does not want them to bind to a port. Generated code is prompted to only call `app.listen(...)` when `process.env.PORT_RUN` is set.
+- During benchmarking, `PORT_RUN` is not set. To run a generated endpoint locally:
+
+PowerShell (Windows):
+
+```
+$env:PORT_RUN=3000; node generated/<model>/<task>.js
+```
+
+Bash:
+
+```
+PORT_RUN=3000 node generated/<model>/<task>.js
+```
+
 ## Notes
 
 - Keep prompts deterministic and outputs constrained. The runner enforces a code-only fenced block.
