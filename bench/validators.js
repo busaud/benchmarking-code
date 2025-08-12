@@ -2,24 +2,7 @@ const request = require("supertest");
 
 /**
  * Validate an Express endpoint using a declarative test plan from the task definition.
- * The task should provide:
- * {
- *   endpoint: {
- *     method: 'get' | 'post' | 'put' | 'patch' | 'delete',
- *     path: string,
- *     cases: Array<{
- *       query?: object,
- *       body?: object,
- *       headers?: object,
- *       status: number,
- *       expect?: {
- *         equals?: object,
- *         contains?: object,
- *         hasProps?: string[]
- *       }
- *     }>
- *   }
- * }
+ * Returns an object with per-case results rather than throwing.
  */
 async function validateEndpoint(app, task) {
     if (!task || !task.endpoint) throw new Error("Task missing endpoint config");
@@ -29,11 +12,14 @@ async function validateEndpoint(app, task) {
     }
 
     const server = request(app);
+    const results = [];
 
-    for (const testCase of cases) {
+    for (let i = 0; i < cases.length; i += 1) {
+        const testCase = cases[i];
         const httpMethod = method.toLowerCase();
         if (typeof server[httpMethod] !== "function") {
-            throw new Error(`Unsupported method: ${method}`);
+            results.push({ index: i, passed: false, reason: `Unsupported method: ${method}` });
+            continue;
         }
 
         let req = server[httpMethod](path);
@@ -52,40 +38,80 @@ async function validateEndpoint(app, task) {
             req = req.send(testCase.body);
         }
 
-        const res = await req;
+        let res;
+        try {
+            res = await req;
+        } catch (e) {
+            results.push({ index: i, passed: false, reason: `Request failed: ${e?.message || e}` });
+            continue;
+        }
 
         if (res.status !== testCase.status) {
-            throw new Error(`Expected status ${testCase.status}, got ${res.status}`);
+            results.push({
+                index: i,
+                passed: false,
+                reason: `Expected status ${testCase.status}, got ${res.status}`,
+                received: { status: res.status, body: res.body },
+            });
+            continue;
         }
 
         const expected = testCase.expect || {};
 
         if (expected.equals) {
-            if (JSON.stringify(res.body) !== JSON.stringify(expected.equals)) {
-                throw new Error(
-                    `Body mismatch. Expected equals ${JSON.stringify(expected.equals)}, got ${JSON.stringify(res.body)}`
-                );
+            const equal = JSON.stringify(res.body) === JSON.stringify(expected.equals);
+            if (!equal) {
+                results.push({
+                    index: i,
+                    passed: false,
+                    reason: `Body mismatch`,
+                    expected: expected.equals,
+                    received: res.body,
+                });
+                continue;
             }
         }
 
         if (expected.contains) {
+            let containsOk = true;
             for (const [k, v] of Object.entries(expected.contains)) {
                 if (res.body?.[k] !== v) {
-                    throw new Error(
-                        `Body missing or mismatched key '${k}'. Expected ${JSON.stringify(v)}, got ${JSON.stringify(res.body?.[k])}`
-                    );
+                    containsOk = false;
+                    results.push({
+                        index: i,
+                        passed: false,
+                        reason: `Missing or mismatched key '${k}'`,
+                        expected: v,
+                        received: res.body?.[k],
+                    });
+                    break;
                 }
             }
+            if (!containsOk) continue;
         }
 
         if (expected.hasProps) {
+            let hasPropsOk = true;
             for (const prop of expected.hasProps) {
                 if (!(prop in (res.body || {}))) {
-                    throw new Error(`Body missing required property '${prop}'`);
+                    hasPropsOk = false;
+                    results.push({
+                        index: i,
+                        passed: false,
+                        reason: `Missing property '${prop}'`,
+                        received: res.body,
+                    });
+                    break;
                 }
             }
+            if (!hasPropsOk) continue;
         }
+
+        results.push({ index: i, passed: true });
     }
+
+    const allPassed = results.every((r) => r.passed);
+    return { allPassed, caseResults: results };
 }
 
 module.exports = { validateEndpoint };

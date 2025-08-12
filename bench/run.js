@@ -47,26 +47,68 @@ async function run() {
                 let passed = false;
                 const t0 = Date.now();
 
+                const baseName = `${task.id}_${attempt}`;
+                const detailPath = path.join(modelDir, `${baseName}.detail.json`);
+                const rawPath = path.join(modelDir, `${baseName}.raw.txt`);
+                let stage = "call";
+                let validation = null;
+
                 try {
+                    stage = "call";
                     content = await callModel({ model: modelEntry.model, prompt });
+
+                    stage = "extract";
                     code = extractFirstJsBlock(content);
                     if (!code) {
-                        // Save raw content for debugging
-                        const rawPath = path.join(modelDir, `${task.id}_${attempt}.raw.txt`);
                         await fs.promises.writeFile(rawPath, String(content || ""), "utf8");
                         throw new Error("No JS code block found");
                     }
+
+                    stage = "write";
                     filepath = path.join(modelDir, `${task.id}_${attempt}.js`);
                     await fs.promises.writeFile(filepath, code, "utf8");
 
-                    // Validate by requiring the generated app and running declarative checks
+                    stage = "require";
                     // eslint-disable-next-line import/no-dynamic-require, global-require
                     const app = require(filepath);
-                    await validateEndpoint(app, task);
-                    passed = true;
+
+                    stage = "validate";
+                    validation = await validateEndpoint(app, task);
+                    passed = validation.allPassed === true;
+
+                    // Persist validation detail for debugging on success as well
+                    await fs.promises.writeFile(
+                        detailPath,
+                        JSON.stringify(
+                            { task: task.id, attempt, model: modelEntry.name, stage, validation },
+                            null,
+                            2
+                        )
+                    );
+
+                    if (!passed) {
+                        status = "error";
+                        const failedIdx = validation.caseResults
+                            .filter((c) => !c.passed)
+                            .map((c) => c.index)
+                            .join(", ");
+                        errorMessage = failedIdx ? `Failed cases: ${failedIdx}` : "Validation failed";
+                    }
                 } catch (err) {
                     status = "error";
                     errorMessage = err?.message || String(err);
+                    // Always persist detail on error with stage info
+                    const detail = {
+                        task: task.id,
+                        attempt,
+                        model: modelEntry.name,
+                        stage,
+                        error: errorMessage,
+                    };
+                    if (stage === "extract") detail.rawSavedTo = rawPath;
+                    try {
+                        await fs.promises.writeFile(detailPath, JSON.stringify(detail, null, 2));
+                    } catch (_) {}
                 }
 
                 const durationMs = Date.now() - t0;
@@ -80,6 +122,8 @@ async function run() {
                     error: errorMessage,
                     passed,
                     durationMs,
+                    detail: detailPath,
+                    raw: code ? undefined : rawPath,
                 });
             }
         }

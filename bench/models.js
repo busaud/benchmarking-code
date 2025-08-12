@@ -1,7 +1,7 @@
 module.exports = [
     // Update the `model` values to the exact Cerebras model IDs you have access to
     // { name: "gpt-oss-120B", model: "gpt-oss-120b" },
-    { name: "llama3-70b", model: "llama-3.3-70b" },
+    // { name: "llama3-70b", model: "llama-3.3-70b" },
     { name: "llama3-8b", model: "llama3.1-8b" },
     // { name: "llama-4-scout", model: "llama-4-scout-17b-16e-instruct" },
     // { name: "llama-4-maverick", model: "llama-4-maverick-17b-128e-instruct" },
