@@ -7,6 +7,14 @@ const tasks = require("./tasks");
 const { extractFirstJsBlock } = require("./extractCodeBlock");
 const { validateEndpoint } = require("./validators");
 
+// Prevent the benchmark process from exiting prematurely due to uncaught errors in generated code
+process.on("uncaughtException", (err) => {
+    console.error("[global] Uncaught exception captured:", err);
+});
+process.on("unhandledRejection", (reason) => {
+    console.error("[global] Unhandled promise rejection captured:", reason);
+});
+
 const ROUNDS = parseInt(process.env.ROUNDS || "10", 10);
 
 async function ensureDir(dir) {
@@ -32,6 +40,7 @@ function inferDifficulty(taskId) {
 }
 
 async function run() {
+    const benchmarkStart = Date.now();
     const genRoot = path.join(process.cwd(), "generated");
     await ensureDir(genRoot);
 
@@ -40,6 +49,9 @@ async function run() {
     // Build difficulty map from tasks (infer from id when not provided)
     const difficultyByTask = {};
     for (const t of tasks) difficultyByTask[t.id] = inferDifficulty(t.id);
+
+    const totalIterations = models.length * tasks.length * ROUNDS;
+    let completedIterations = 0;
 
     for (const modelEntry of models) {
         const modelDir = path.join(genRoot, modelEntry.name);
@@ -132,6 +144,10 @@ async function run() {
                     raw: code ? undefined : rawPath,
                     difficulty: difficultyByTask[task.id],
                 });
+
+                completedIterations += 1;
+                const progressPct = Math.round((completedIterations / totalIterations) * 1000) / 10; // one decimal
+                process.stdout.write(`\rProgress: ${progressPct}% (${completedIterations}/${totalIterations})`);
             }
         }
     }
@@ -244,6 +260,9 @@ async function run() {
     }
     console.log("Per model summary by difficulty (basic, hard, extra_hard):");
     console.table(diffRows);
+
+    const totalDurationSec = Math.round((Date.now() - benchmarkStart) / 1000);
+    console.log(`Total benchmark time: ${totalDurationSec} seconds`);
 }
 
 run().catch((err) => {
