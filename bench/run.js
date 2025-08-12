@@ -25,14 +25,24 @@ async function callModel({ model, prompt }) {
     return completion.choices?.[0]?.message?.content || "";
 }
 
+function inferDifficulty(taskId) {
+    if (/_extra_hard$/i.test(taskId)) return "extra_hard";
+    if (/_hard$/i.test(taskId)) return "hard";
+    return "basic";
+}
+
 async function run() {
-    const outRoot = path.join(process.cwd(), "generated");
-    await ensureDir(outRoot);
+    const genRoot = path.join(process.cwd(), "generated");
+    await ensureDir(genRoot);
 
     const results = [];
 
+    // Build difficulty map from tasks (infer from id when not provided)
+    const difficultyByTask = {};
+    for (const t of tasks) difficultyByTask[t.id] = inferDifficulty(t.id);
+
     for (const modelEntry of models) {
-        const modelDir = path.join(outRoot, modelEntry.name);
+        const modelDir = path.join(genRoot, modelEntry.name);
         await ensureDir(modelDir);
 
         for (const task of tasks) {
@@ -124,6 +134,7 @@ async function run() {
                     durationMs,
                     detail: detailPath,
                     raw: code ? undefined : rawPath,
+                    difficulty: difficultyByTask[task.id],
                 });
             }
         }
@@ -138,23 +149,34 @@ async function run() {
         stats[r.model][r.task].totalMs += r.durationMs || 0;
         if (r.status === "ok" && r.passed) stats[r.model][r.task].success += 1;
     }
-    const statsWithPercent = {};
+
+    /**
+     * modeTaskStats is a map of model name to a map of task id to stats
+     * modeTaskStats[model][taskId] = {
+     *  success: number,
+     *  attempts: number,
+     *  totalMs: number,
+     *  percent: number,
+     *  avgMs: number
+     * }
+     */
+    const modeTaskStats = {};
     for (const [model, tasksMap] of Object.entries(stats)) {
-        statsWithPercent[model] = {};
+        modeTaskStats[model] = {};
         for (const [taskId, s] of Object.entries(tasksMap)) {
             const percent = s.attempts > 0 ? Math.round((s.success / s.attempts) * 1000) / 10 : 0; // one decimal
             const avgMs = s.attempts > 0 ? Math.round(s.totalMs / s.attempts) : 0;
-            statsWithPercent[model][taskId] = { ...s, percent, avgMs };
+            modeTaskStats[model][taskId] = { ...s, percent, avgMs };
         }
     }
 
-    const summary = { rounds: ROUNDS, results, stats: statsWithPercent };
-    const summaryPath = path.join(outRoot, "summary.json");
+    const summary = { rounds: ROUNDS, results, stats: modeTaskStats };
+    const summaryPath = path.join(genRoot, "summary.json");
     await fs.promises.writeFile(summaryPath, JSON.stringify(summary, null, 2));
 
-    // Print concise table
+    // Print concise per-task table
     const tableRows = [];
-    for (const [model, tasksMap] of Object.entries(statsWithPercent)) {
+    for (const [model, tasksMap] of Object.entries(modeTaskStats)) {
         for (const [taskId, s] of Object.entries(tasksMap)) {
             tableRows.push({
                 model,
@@ -167,6 +189,65 @@ async function run() {
     }
     console.log("Benchmark results written to", summaryPath);
     console.table(tableRows);
+
+    // Print combined summary for task families (create_user*, sum*) with avg time (sec)
+    const fixedRows = [];
+    for (const [model, tasksMap] of Object.entries(modeTaskStats)) {
+        let cuSuccess = 0,
+            cuAttempts = 0,
+            cuTotalMs = 0;
+        let smSuccess = 0,
+            smAttempts = 0,
+            smTotalMs = 0;
+        for (const [taskId, s] of Object.entries(tasksMap)) {
+            if (taskId.startsWith("create_user")) {
+                cuSuccess += s.success;
+                cuAttempts += s.attempts;
+                cuTotalMs += s.totalMs || 0;
+            } else if (taskId.startsWith("sum")) {
+                smSuccess += s.success;
+                smAttempts += s.attempts;
+                smTotalMs += s.totalMs || 0;
+            }
+        }
+        const cuPct = cuAttempts ? Math.round((cuSuccess / cuAttempts) * 1000) / 10 : 0;
+        const smPct = smAttempts ? Math.round((smSuccess / smAttempts) * 1000) / 10 : 0;
+        const totalMs = cuTotalMs + smTotalMs;
+        const totalAttempts = cuAttempts + smAttempts;
+        const avgSec = totalAttempts ? Math.round((totalMs / totalAttempts / 1000) * 100) / 100 : 0;
+        fixedRows.push({ model, create_user: `${cuPct}%`, sum: `${smPct}%`, avgTimeSec: avgSec });
+    }
+    console.log("Per model summary (create_user*, sum*, avg time in seconds):");
+    console.table(fixedRows);
+
+    // Print by difficulty summary
+    const diffRows = [];
+    for (const [model, tasksMap] of Object.entries(modeTaskStats)) {
+        let basicSuccess = 0,
+            basicAttempts = 0;
+        let hardSuccess = 0,
+            hardAttempts = 0;
+        let extraSuccess = 0,
+            extraAttempts = 0;
+        for (const [taskId, s] of Object.entries(tasksMap)) {
+            if (difficultyByTask[taskId] === "basic") {
+                basicSuccess += s.success;
+                basicAttempts += s.attempts;
+            } else if (difficultyByTask[taskId] === "hard") {
+                hardSuccess += s.success;
+                hardAttempts += s.attempts;
+            } else if (difficultyByTask[taskId] === "extra_hard") {
+                extraSuccess += s.success;
+                extraAttempts += s.attempts;
+            }
+        }
+        const basicPct = basicAttempts ? Math.round((basicSuccess / basicAttempts) * 1000) / 10 : 0;
+        const hardPct = hardAttempts ? Math.round((hardSuccess / hardAttempts) * 1000) / 10 : 0;
+        const extraPct = extraAttempts ? Math.round((extraSuccess / extraAttempts) * 1000) / 10 : 0;
+        diffRows.push({ model, basic: `${basicPct}%`, hard: `${hardPct}%`, extra_hard: `${extraPct}%` });
+    }
+    console.log("Per model summary by difficulty (basic, hard, extra_hard):");
+    console.table(diffRows);
 }
 
 run().catch((err) => {
