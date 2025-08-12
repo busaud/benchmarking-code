@@ -20,7 +20,7 @@ async function callModel({ model, prompt }) {
             { role: "system", content: "You are a precise code generator." },
             { role: "user", content: prompt },
         ],
-        temperature: 0,
+        temperature: 0.8,
     });
     return completion.choices?.[0]?.message?.content || "";
 }
@@ -89,11 +89,7 @@ async function run() {
                     // Persist validation detail for debugging on success as well
                     await fs.promises.writeFile(
                         detailPath,
-                        JSON.stringify(
-                            { task: task.id, attempt, model: modelEntry.name, stage, validation },
-                            null,
-                            2
-                        )
+                        JSON.stringify({ task: task.id, attempt, model: modelEntry.name, stage, validation }, null, 2)
                     );
 
                     if (!passed) {
