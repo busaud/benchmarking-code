@@ -5,7 +5,7 @@ const buildPrompt = require("./prompt");
 const models = require("./models");
 const tasks = require("./tasks");
 const { extractFirstJsBlock } = require("./extractCodeBlock");
-const { validateEndpoint } = require("./validators");
+const { validateEndpoint, validateReactComponent } = require("./validators");
 
 // Prevent the benchmark process from exiting prematurely due to uncaught errors in generated code
 process.on("uncaughtException", (err) => {
@@ -140,16 +140,24 @@ async function run() {
 
                     stage = "require";
                     // eslint-disable-next-line import/no-dynamic-require, global-require
-                    const app = require(filepath);
+                    const exported = require(filepath);
 
                     stage = "validate";
-                    validation = await validateEndpoint(app, task);
+                    if (task.type === "react_component") {
+                        validation = await validateReactComponent(exported, task);
+                    } else {
+                        validation = await validateEndpoint(exported, task);
+                    }
                     passed = validation.allPassed === true;
 
                     // Persist validation detail for debugging on success as well
                     await fs.promises.writeFile(
                         detailPath,
-                        JSON.stringify({ task: task.id, attempt, model: modelEntry.name, stage, validation }, null, 2)
+                        JSON.stringify(
+                            { task: task.id, attempt, model: modelEntry.name, stage, validation },
+                            null,
+                            2
+                        )
                     );
 
                     if (!passed) {
@@ -195,7 +203,9 @@ async function run() {
 
                 completedIterations += 1;
                 const progressPct = Math.round((completedIterations / totalIterations) * 1000) / 10; // one decimal
-                process.stdout.write(`\rProgress: ${progressPct}% (${completedIterations}/${totalIterations})`);
+                process.stdout.write(
+                    `\rProgress: ${progressPct}% (${completedIterations}/${totalIterations})`
+                );
             }
         }
     }
@@ -287,7 +297,7 @@ async function run() {
             smPassAtCounts[k] = 0;
         }
         for (const [taskId, s] of Object.entries(tasksMap)) {
-            if (taskId.startsWith("create_user")) {
+            if (taskId.startsWith("endpoint_create_user") || taskId.startsWith("create_user")) {
                 cuSuccess += s.success;
                 cuAttempts += s.attempts;
                 cuTotalMs += s.totalMs || 0;
@@ -298,7 +308,7 @@ async function run() {
                         cuPassAtCounts[k] += 1;
                     }
                 }
-            } else if (taskId.startsWith("sum")) {
+            } else if (taskId.startsWith("endpoint_sum") || taskId.startsWith("sum")) {
                 smSuccess += s.success;
                 smAttempts += s.attempts;
                 smTotalMs += s.totalMs || 0;
@@ -354,17 +364,17 @@ async function run() {
             extraPassAtCounts[k] = 0;
         }
         for (const [taskId, s] of Object.entries(tasksMap)) {
-            if (difficultyByTask[taskId] === "basic") {
-                basicSuccess += s.success;
-                basicAttempts += s.attempts;
+            if (/(_|^)extra_hard$/i.test(taskId)) {
+                extraSuccess += s.success;
+                extraAttempts += s.attempts;
                 for (const k of PASS_AT_KS) {
                     if (k === 1) continue;
                     if (typeof s.passAt?.[k] === "number") {
-                        basicPassAtSums[k] += s.passAt[k];
-                        basicPassAtCounts[k] += 1;
+                        extraPassAtSums[k] += s.passAt[k];
+                        extraPassAtCounts[k] += 1;
                     }
                 }
-            } else if (difficultyByTask[taskId] === "hard") {
+            } else if (/(_|^)hard$/i.test(taskId)) {
                 hardSuccess += s.success;
                 hardAttempts += s.attempts;
                 for (const k of PASS_AT_KS) {
@@ -374,14 +384,14 @@ async function run() {
                         hardPassAtCounts[k] += 1;
                     }
                 }
-            } else if (difficultyByTask[taskId] === "extra_hard") {
-                extraSuccess += s.success;
-                extraAttempts += s.attempts;
+            } else {
+                basicSuccess += s.success;
+                basicAttempts += s.attempts;
                 for (const k of PASS_AT_KS) {
                     if (k === 1) continue;
                     if (typeof s.passAt?.[k] === "number") {
-                        extraPassAtSums[k] += s.passAt[k];
-                        extraPassAtCounts[k] += 1;
+                        basicPassAtSums[k] += s.passAt[k];
+                        basicPassAtCounts[k] += 1;
                     }
                 }
             }
@@ -392,9 +402,15 @@ async function run() {
         const row = { model, basic: `${basicPct}%`, hard: `${hardPct}%`, extra_hard: `${extraPct}%` };
         for (const k of PASS_AT_KS) {
             if (k === 1) continue;
-            const bAvg = basicPassAtCounts[k] ? roundToOneDecimal(basicPassAtSums[k] / basicPassAtCounts[k]) : null;
-            const hAvg = hardPassAtCounts[k] ? roundToOneDecimal(hardPassAtSums[k] / hardPassAtCounts[k]) : null;
-            const eAvg = extraPassAtCounts[k] ? roundToOneDecimal(extraPassAtSums[k] / extraPassAtCounts[k]) : null;
+            const bAvg = basicPassAtCounts[k]
+                ? roundToOneDecimal(basicPassAtSums[k] / basicPassAtCounts[k])
+                : null;
+            const hAvg = hardPassAtCounts[k]
+                ? roundToOneDecimal(hardPassAtSums[k] / hardPassAtCounts[k])
+                : null;
+            const eAvg = extraPassAtCounts[k]
+                ? roundToOneDecimal(extraPassAtSums[k] / extraPassAtCounts[k])
+                : null;
             row[`p@${k}_basic`] = bAvg === null ? "-" : `${bAvg}%`;
             row[`p@${k}_hard`] = hAvg === null ? "-" : `${hAvg}%`;
             row[`p@${k}_extra`] = eAvg === null ? "-" : `${eAvg}%`;

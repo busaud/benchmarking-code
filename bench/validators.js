@@ -114,4 +114,92 @@ async function validateEndpoint(app, task) {
     return { allPassed, caseResults: results };
 }
 
-module.exports = { validateEndpoint };
+/**
+ * Validate a React component using ReactDOMServer rendering.
+ * Task schema: task.component = { cases: [ { props, expect: { htmlContains?: string[], equalsHtml?: string, hasDataTestIds?: string[] } } ] }
+ */
+async function validateReactComponent(componentExport, task) {
+    if (!task || !task.component) throw new Error("Task missing component config");
+    const cases = task.component.cases || [];
+    let React;
+    let ReactDOMServer;
+    try {
+        // eslint-disable-next-line global-require
+        React = require("react");
+        ReactDOMServer = require("react-dom/server");
+    } catch (e) {
+        throw new Error("React and react-dom must be installed to validate react_component tasks");
+    }
+
+    const results = [];
+
+    for (let i = 0; i < cases.length; i += 1) {
+        const testCase = cases[i];
+        let html = "";
+        try {
+            const element = React.createElement(componentExport, testCase.props || {});
+            html = ReactDOMServer.renderToString(element);
+        } catch (e) {
+            results.push({ index: i, passed: false, reason: `Render failed: ${e?.message || e}` });
+            continue;
+        }
+
+        const expected = testCase.expect || {};
+
+        if (expected.equalsHtml) {
+            if (html !== expected.equalsHtml) {
+                results.push({
+                    index: i,
+                    passed: false,
+                    reason: "HTML mismatch",
+                    expected: expected.equalsHtml,
+                    received: html,
+                });
+                continue;
+            }
+        }
+
+        if (expected.htmlContains) {
+            let ok = true;
+            for (const sub of expected.htmlContains) {
+                if (!html.includes(sub)) {
+                    ok = false;
+                    results.push({
+                        index: i,
+                        passed: false,
+                        reason: `Missing HTML substring`,
+                        expected: sub,
+                        received: html,
+                    });
+                    break;
+                }
+            }
+            if (!ok) continue;
+        }
+
+        if (expected.hasDataTestIds) {
+            let ok = true;
+            for (const testId of expected.hasDataTestIds) {
+                const pattern = new RegExp(`data-testid=\"${testId}\"`);
+                if (!pattern.test(html)) {
+                    ok = false;
+                    results.push({
+                        index: i,
+                        passed: false,
+                        reason: `Missing data-testid '${testId}'`,
+                        received: html,
+                    });
+                    break;
+                }
+            }
+            if (!ok) continue;
+        }
+
+        results.push({ index: i, passed: true });
+    }
+
+    const allPassed = results.every((r) => r.passed);
+    return { allPassed, caseResults: results };
+}
+
+module.exports = { validateEndpoint, validateReactComponent };

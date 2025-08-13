@@ -1,7 +1,8 @@
 module.exports = {
     id: "create_user",
+    type: "endpoint",
     description:
-        'Create an Express app with POST /users that accepts JSON { "email": string, "name": string }. Validate: email to be email formatted and name length <= 2. On success, return 201 with { id: string, email, name }. On invalid input, return 400 { error: "invalid_input" }. No database; generate id with a random number.',
+        'Create an Express app with POST /users that accepts JSON email and name. name max length is 2. On success, return 201 with { id: string, email, name }. On error, status 400 with { error: "invalid_input" }. No database; generate id with a random number.',
     contract: [
         'Request: POST /users { "email": "a@b.com", "name": "Mo" }',
         'Response: 201 { "id": "<random_number>", "email": "a@b.com", "name": "Mo" }',
